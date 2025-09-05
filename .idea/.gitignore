@@ -1,0 +1,23 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.toml
+*.xml
+.env
+/logs/
+
+# Go build cache & vendor
+/vendor/
+/bin/
+/build/
+
+# IDE/Editor settings
+.idea/
+.vscode/
+*.swp
+*.iml

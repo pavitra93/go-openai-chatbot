@@ -1,8 +1,8 @@
 # GPT-4o Chatbot Services (Go) — No Memory, Memory, and Streaming
-Build robust, production-ready chatbot services in Go that showcase three patterns:
+Built Chatbot services in Go that showcase three patterns:
 - No-memory chatbot: stateless request/response.
 - Memory chatbot: conversational context across turns.
-- Memory + streaming chatbot: token-by-token streaming to the terminal.
+- Memory and streaming chatbot: token-by-token streaming to the terminal.
 
 Designed with clean interfaces, safe concurrency (goroutines + channels), structured logging (slog), and an efficient singleton OpenAI client.
 ## Highlights

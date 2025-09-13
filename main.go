@@ -7,8 +7,10 @@ import (
 	"strconv"
 
 	"github.com/joho/godotenv"
+	"github.com/openai/openai-go/v2"
 	singletons "github.com/pavitra93/11-openai-chats/external/clients"
-	"github.com/pavitra93/11-openai-chats/internal/service"
+	"github.com/pavitra93/11-openai-chats/internal/openaiapi"
+	"github.com/pavitra93/11-openai-chats/internal/service/chatbot"
 	"github.com/pavitra93/11-openai-chats/pkg/logger"
 )
 
@@ -32,30 +34,34 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize openai client
+	// Initialize OpenAI client & set Config
 	openAIServiceClient := singletons.GetOpenAIClientInstance(openapiKey)
 
-	// Initialize chatbot service
-	ChatbotService := &service.ChatbotService{
+	// Initialize OpenAI Config
+	OpenaiCfg := &singletons.OpenAIConfig{
 		OpenAPIClient: openAIServiceClient.OpenAIClient,
 		MaxTokens:     maxTokens,
 		Temperature:   temperature,
 		SystemMessage: systemMessage,
+		History: &openai.ChatCompletionNewParams{
+			Messages: []openai.ChatCompletionMessageParamUnion{
+				openai.SystemMessage(systemMessage),
+			},
+		},
+		AllowHistory: true,
+		HistorySize:  5,
 	}
 
-	// Initialize worker service
-	WorkerService := &service.WorkerService{ChatbotService}
+	// Initialize Sender Strategy as Stream or Once
+	SenderStrategy := openaiapi.NewSenderRecieverStrategy("stream", OpenaiCfg)
 
+	// Initialize Chatbot Service wi
 	//fmt.Println("========Chatbot with No Memory=========")
+	//NoMemoryChatbotService := &chatbot.NoMemoryChatbotService{SenderStrategy: SenderStrategy}
+	//NoMemoryChatbotService.RunNoMemoryChatbot()
 
-	//NoMemoryChatbotService := &service.NoMemoryChatbotService{ChatbotService}
-	//NoMemoryChatbotService.RunNoMemoryChatbot(WorkerService)
+	fmt.Println("========Chatbot with Memory=========")
+	MemoryChatbotService := &chatbot.MemoryChatbotService{SenderStrategy: SenderStrategy}
+	MemoryChatbotService.RunMemoryChatbot()
 
-	//fmt.Println("========Chatbot with Memory=========")
-	//MemoryChatbotService := &service.MemoryChatbotService{ChatbotService}
-	//MemoryChatbotService.RunMemoryChatbot(WorkerService)
-
-	fmt.Println("========Chatbot with Streaming Memory=========")
-	StreamingChatBotService := &service.StreamingMemoryChatbotService{ChatbotService}
-	StreamingChatBotService.RunStreamingMemoryChatbot(WorkerService)
 }

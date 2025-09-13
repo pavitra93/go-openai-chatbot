@@ -1,4 +1,4 @@
-package service
+package chatbot
 
 import (
 	"bufio"
@@ -9,50 +9,43 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/openai/openai-go/v2"
-	"github.com/pavitra93/11-openai-chats/internal/worker"
+	"github.com/pavitra93/11-openai-chats/internal/strategy"
 )
 
-type NoMemoryChatbotService struct {
-	ChatbotService *ChatbotService
+type MemoryChatbotService struct {
+	SenderStrategy strategy.SendAndRecieveOpenAIStrategy
 }
 
-func (n *NoMemoryChatbotService) RunNoMemoryChatbot(worker worker.Worker) {
+func (m *MemoryChatbotService) RunMemoryChatbot() {
 
 	// start chatbot
 	fmt.Println("Hello with Memory Chatbot")
 
 	// send and recieve messages channel
-	JobMessages := make(chan []openai.ChatCompletionMessageParamUnion)
+	JobMessages := make(chan string)
 	ReceiveMessages := make(chan string)
 
 	// create done channel
 	doneChan := make(chan bool)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// create wait group
 	wg := &sync.WaitGroup{}
 
 	wg.Add(2)
 
+	// create context and cancel function with chatbot service
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// start goroutine to send & recieve messages from OpenAI
-	go worker.SendMessagestoOpenAI(ctx, JobMessages, ReceiveMessages, wg, n.ChatbotService.AllowHistory)
-	go worker.RecieveMessagesfromOpenAI(ctx, ReceiveMessages, doneChan, wg)
+	go m.SenderStrategy.SendtoOpenAI(ctx, JobMessages, ReceiveMessages, wg)
+	go m.SenderStrategy.RecieveFromOpenAI(ctx, ReceiveMessages, doneChan, wg)
 
 	// initialize reader
 	reader := bufio.NewReader(os.Stdin)
 
 	// start chat loop
 	for {
-		// initialize openai chat
-		n.ChatbotService.History = &openai.ChatCompletionNewParams{
-			Messages: []openai.ChatCompletionMessageParamUnion{
-				openai.SystemMessage(n.ChatbotService.SystemMessage),
-			},
-		}
-
 		dispatched := false
 		fmt.Print("🧔🏻‍♂️ You: ")
 		userMessage, _ := reader.ReadString('\n')
@@ -80,9 +73,7 @@ func (n *NoMemoryChatbotService) RunNoMemoryChatbot(worker worker.Worker) {
 			slog.Info("Chat explicitly stopped by user")
 			return
 		default:
-			// append user message
-			n.ChatbotService.History.Messages = append(n.ChatbotService.History.Messages, openai.UserMessage(userMessage))
-			JobMessages <- n.ChatbotService.History.Messages
+			JobMessages <- userMessage
 			slog.Info("Message sent to sender channel")
 			dispatched = true
 			fmt.Println("Bot is thinking...💭")

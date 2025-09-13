@@ -1,81 +1,29 @@
-package service
+package openaiapi
 
 import (
 	"bufio"
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"strings"
 	"sync"
 
 	"github.com/openai/openai-go/v2"
+	singletons "github.com/pavitra93/11-openai-chats/external/clients"
+	"github.com/pavitra93/11-openai-chats/pkg/utils"
 )
 
-type WorkerService struct {
-	ChatbotService *ChatbotService
+type StreamStrategy struct {
+	OpenAIConfig *singletons.OpenAIConfig
 }
 
-func (w *WorkerService) SendMessagestoOpenAI(ctx context.Context, messages <-chan []openai.ChatCompletionMessageParamUnion, reciever chan<- string, wg *sync.WaitGroup, history bool) {
-	defer wg.Done()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case message, ok := <-messages:
-			if !ok {
-				return
-			}
-
-			// send messages to OpenAI
-			param := openai.ChatCompletionNewParams{
-				Messages:    message,
-				Model:       openai.ChatModelGPT4_1,
-				MaxTokens:   openai.Int(w.ChatbotService.MaxTokens),
-				Temperature: openai.Float(w.ChatbotService.Temperature),
-			}
-
-			// Send the request
-			resp, err := w.ChatbotService.OpenAPIClient.Chat.Completions.New(context.TODO(), param)
-			if err != nil {
-				reciever <- "Error: " + err.Error()
-				return
-			}
-
-			slog.Info("Response from OpenAI", "Content", resp.Choices[0].Message.Content, "finish reason", resp.Choices[0].FinishReason)
-
-			// Safely print the first text part if the SDK returns structured content
-			if len(resp.Choices) > 0 && len(resp.Choices[0].Message.Content) > 0 && history {
-				w.ChatbotService.History.Messages = append(w.ChatbotService.History.Messages, resp.Choices[0].Message.ToParam())
-			}
-
-			// send messages back to channel
-			reciever <- resp.Choices[0].Message.Content
-			slog.Info("Message sent to reciever channel")
-		}
-
-	}
-
-}
-
-func (w *WorkerService) RecieveMessagesfromOpenAI(ctx context.Context, messages <-chan string, done chan<- bool, wg *sync.WaitGroup) {
-	defer wg.Done()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case msg, ok := <-messages:
-			if !ok {
-				return
-			}
-			slog.Info("Message recieved from reciever channel", "Message", msg)
-			fmt.Printf("🤖 Chatbot: %s\n", msg)
-			done <- true
-		}
+func NewStreamStrategy(config *singletons.OpenAIConfig) *StreamStrategy {
+	return &StreamStrategy{
+		OpenAIConfig: config,
 	}
 }
 
-func (w *WorkerService) StreamToOpenAI(ctx context.Context, messages <-chan []openai.ChatCompletionMessageParamUnion, reciever chan<- string, wg *sync.WaitGroup) {
+func (w *StreamStrategy) SendtoOpenAI(ctx context.Context, messages <-chan string, reciever chan<- string, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
 		select {
@@ -88,18 +36,23 @@ func (w *WorkerService) StreamToOpenAI(ctx context.Context, messages <-chan []op
 				return
 			}
 
+			// make history window and append user message
+			w.OpenAIConfig.History.Messages = utils.MakeHistoryWindow(w.OpenAIConfig.History.Messages, message, w.OpenAIConfig.HistorySize)
+			w.OpenAIConfig.History.Messages = append(w.OpenAIConfig.History.Messages, openai.UserMessage(message))
+			slog.Info("History window created", "History", w.OpenAIConfig.History.Messages)
+
 			// send messages to OpenAI
 			param := openai.ChatCompletionNewParams{
-				Messages:    message,
+				Messages:    w.OpenAIConfig.History.Messages,
 				Model:       openai.ChatModelGPT4_1,
-				MaxTokens:   openai.Int(w.ChatbotService.MaxTokens),
-				Temperature: openai.Float(w.ChatbotService.Temperature),
+				MaxTokens:   openai.Int(w.OpenAIConfig.MaxTokens),
+				Temperature: openai.Float(w.OpenAIConfig.Temperature),
 			}
 
 			acc := openai.ChatCompletionAccumulator{}
 
 			// Send the request
-			stream := w.ChatbotService.OpenAPIClient.Chat.Completions.NewStreaming(context.TODO(), param)
+			stream := w.OpenAIConfig.OpenAPIClient.Chat.Completions.NewStreaming(context.TODO(), param)
 			for stream.Next() {
 				chunk := stream.Current()
 
@@ -133,8 +86,8 @@ func (w *WorkerService) StreamToOpenAI(ctx context.Context, messages <-chan []op
 			slog.Info("Response from OpenAI", "Content", acc.Choices[0].Message.Content, "finish reason", acc.Choices[0].FinishReason)
 
 			// Safely print the first text part if the SDK returns structured content
-			if len(acc.Choices[0].Message.Content) > 0 && len(acc.Choices[0].Message.Content) > 0 {
-				w.ChatbotService.History.Messages = append(w.ChatbotService.History.Messages, acc.Choices[0].Message.ToParam())
+			if len(acc.Choices[0].Message.Content) > 0 && len(acc.Choices[0].Message.Content) > 0 && w.OpenAIConfig.AllowHistory {
+				w.OpenAIConfig.History.Messages = append(w.OpenAIConfig.History.Messages, acc.Choices[0].Message.ToParam())
 			}
 
 		}
@@ -143,7 +96,7 @@ func (w *WorkerService) StreamToOpenAI(ctx context.Context, messages <-chan []op
 
 }
 
-func (w *WorkerService) StreamFromOpenAI(ctx context.Context, messages <-chan string, done chan<- bool, wg *sync.WaitGroup) {
+func (w *StreamStrategy) RecieveFromOpenAI(ctx context.Context, messages <-chan string, done chan<- bool, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	writer := bufio.NewWriter(os.Stdout)

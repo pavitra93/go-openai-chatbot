@@ -51,6 +51,39 @@ func GetManager() *Manager {
 	return managerInstance
 }
 
+// ensureObjectSchema normalizes an arbitrary map into a valid JSON Schema object
+// suitable for OpenAI tool function parameters. It guarantees the presence of
+// "type":"object" and at least an empty "properties" map. It also strips
+// unsupported or unnecessary keys that can cause rejections.
+func ensureObjectSchema(schema map[string]any) map[string]any {
+	if schema == nil {
+		return map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		}
+	}
+
+	// Remove noisy top-level keys often present in exported schemas
+	delete(schema, "$defs")
+	delete(schema, "$schema")
+	delete(schema, "$id")
+
+	// Enforce object type schema expected by OpenAI for tool parameters
+	if t, ok := schema["type"].(string); !ok || t == "" {
+		schema["type"] = "object"
+	}
+
+	// Ensure properties exists; OpenAI requires an object schema with properties
+	if _, ok := schema["properties"]; !ok {
+		schema["properties"] = map[string]any{}
+	}
+
+	// If someone provided an array/object of required fields, keep as-is;
+	// otherwise do not add a "required" key to avoid invalid references.
+
+	return schema
+}
+
 // RegisterServer connects to an MCP server, lists its tools and stores session/schema.
 // If a session with the same name exists, it is closed/replaced.
 func (m *Manager) RegisterServer(ctx context.Context, cfg *MCPServerConfig) error {
@@ -65,7 +98,7 @@ func (m *Manager) RegisterServer(ctx context.Context, cfg *MCPServerConfig) erro
 	client := mcp.NewClient(&mcp.Implementation{Name: "mcp-client", Version: "v1.0.0"}, nil)
 
 	// Build transport. Adjust headers/opts depending on your SDK version.
-	transport := &mcp.SSEClientTransport{
+	transport := &mcp.StreamableClientTransport{
 		Endpoint: cfg.Endpoint,
 		// If your SDK supports headers, set them here. If not, remove.
 		// Some transports accept Headers map; if not available remove.
@@ -75,11 +108,12 @@ func (m *Manager) RegisterServer(ctx context.Context, cfg *MCPServerConfig) erro
 	// Connect (use ctx from caller; it should include a timeout)
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
-		return fmt.Errorf("failed to connect to %s: %w", cfg.Name, err)
+		log.Printf("failed to connect to %s: %w", cfg.Name, err)
 	}
 
 	// List tools
 	toolsResult, err := session.ListTools(ctx, nil)
+	log.Printf("toolsResult: %+v", toolsResult)
 	if err != nil {
 		_ = session.Close()
 		return fmt.Errorf("failed to list tools on %s: %w", cfg.Name, err)
@@ -91,6 +125,7 @@ func (m *Manager) RegisterServer(ctx context.Context, cfg *MCPServerConfig) erro
 		// tool.InputSchema is (per your earlier usage) a *jsonschema.Schema-like type.
 		// We'll marshal it to JSON and unmarshal to map[string]any so it fits openai.FunctionParameters.
 		var params openai.FunctionParameters
+		log.Printf("tool.InputSchema: %+v", tool.InputSchema)
 		if tool.InputSchema != nil {
 			b, err := json.Marshal(tool.InputSchema)
 			if err != nil {
@@ -101,13 +136,19 @@ func (m *Manager) RegisterServer(ctx context.Context, cfg *MCPServerConfig) erro
 				if err := json.Unmarshal(b, &m); err != nil {
 					log.Printf("warning: failed to unmarshal schema for tool %s on %s: %v", tool.Name, cfg.Name, err)
 				} else {
-					// optionally remove $defs / $schema to reduce size
-					delete(m, "$defs")
-					delete(m, "$schema")
-					delete(m, "$id")
-					params = openai.FunctionParameters(m)
+					normalized := ensureObjectSchema(m)
+					params = openai.FunctionParameters(normalized)
 				}
 			}
+		}
+
+		// If there was no schema provided or normalization led to empty params,
+		// enforce a minimal valid object schema to satisfy OpenAI validation.
+		if params == nil {
+			params = openai.FunctionParameters(map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			})
 		}
 
 		fd := openai.FunctionDefinitionParam{
@@ -115,6 +156,7 @@ func (m *Manager) RegisterServer(ctx context.Context, cfg *MCPServerConfig) erro
 			Description: openai.String(tool.Description),
 			Parameters:  params,
 		}
+		log.Printf("tool: %+v", fd)
 		openAISchemas = append(openAISchemas, openai.ChatCompletionFunctionTool(fd))
 	}
 

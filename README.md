@@ -80,20 +80,31 @@ ACCUWEATHER_MCP_NAME=weather
 ACCUWEATHER_MCP_SERVER_URL=http://127.0.0.1:4004/messages
 ```
 
-### 4. Start the MCP Weather Server
+### 4.1. Start the MCP Weather Server
 
 Before running the chatbot, start the MCP weather server using the provided command:
 
 ```bash
- $env:ACCUWEATHER_API_KEY = "<ACCUWEATHER_API_KEY>"
-npx -y supergateway --stdio "npx -y @timlukahorstmann/mcp-weather" \
+$env:ACCUWEATHER_API_KEY = "<ACCUWEATHER_API_KEY>"
+
+npx -y supergateway \
+  --stdio "npx -y @timlukahorstmann/mcp-weather" \
   --port 4004 \
-  --baseUrl http://127.0.0.1:4004 \
-  --ssePath /messages \
-  --messagePath /message \
-  --cors "*" \
+  --baseUrl http://127.0.0.1 \
+  --outputTransport streamableHttp
   --env ACCUWEATHER_API_KEY="$ACCUWEATHER_API_KEY"
 ```
+
+### 4.2. Start the Notion MCP Server 
+
+```bash 
+npx -y supergateway \
+  --stdio  "npx -y @notionhq/notion-mcp-server" \
+  --port 4005 \
+  --baseUrl http://127.0.0.1 \
+  --outputTransport streamableHttp \
+  --oauth2Bearer "<nt_****>"
+ ```
 
 ### 5. Run the Application
 

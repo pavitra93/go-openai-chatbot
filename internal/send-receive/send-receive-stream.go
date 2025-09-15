@@ -1,4 +1,4 @@
-package openaiapi
+package send_receive
 
 import (
 	"bufio"
@@ -9,17 +9,20 @@ import (
 	"sync"
 
 	"github.com/openai/openai-go/v2"
-	singletons "github.com/pavitra93/11-openai-chats/external/clients"
+	client_mcp "github.com/pavitra93/11-openai-chats/external/clients/mcp"
+	openai_client "github.com/pavitra93/11-openai-chats/external/clients/openai"
 	"github.com/pavitra93/11-openai-chats/pkg/utils"
 )
 
 type StreamStrategy struct {
-	OpenAIConfig *singletons.OpenAIConfig
+	OpenAIConfig *openai_client.OpenAIConfig
+	MCPManager   *client_mcp.Manager
 }
 
-func NewStreamStrategy(config *singletons.OpenAIConfig) *StreamStrategy {
+func NewStreamStrategy(config *openai_client.OpenAIConfig, mcpManager *client_mcp.Manager) *StreamStrategy {
 	return &StreamStrategy{
 		OpenAIConfig: config,
+		MCPManager:   mcpManager,
 	}
 }
 
@@ -96,7 +99,7 @@ func (w *StreamStrategy) SendtoOpenAI(ctx context.Context, messages <-chan strin
 
 }
 
-func (w *StreamStrategy) RecieveFromOpenAI(ctx context.Context, messages <-chan string, done chan<- bool, wg *sync.WaitGroup) {
+func (w *StreamStrategy) RecieveFromOpenAI(ctx context.Context, reciever <-chan string, done chan<- bool, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	writer := bufio.NewWriter(os.Stdout)
@@ -120,7 +123,7 @@ func (w *StreamStrategy) RecieveFromOpenAI(ctx context.Context, messages <-chan 
 			}
 			return
 
-		case msg, ok := <-messages:
+		case msg, ok := <-reciever:
 			if !ok {
 				// upstream closed; if we were mid-stream, finish it
 				if inStream {

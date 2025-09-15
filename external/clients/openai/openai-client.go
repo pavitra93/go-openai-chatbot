@@ -1,4 +1,4 @@
-package clients
+package openai
 
 import (
 	"sync"
@@ -9,6 +9,16 @@ import (
 
 type openAIServiceClient struct {
 	OpenAIClient *openai.Client
+}
+
+type OpenAIConfig struct {
+	OpenAPIClient *openai.Client
+	MaxTokens     int64
+	Temperature   float64
+	SystemMessage string
+	History       *openai.ChatCompletionNewParams
+	AllowHistory  bool
+	HistorySize   int
 }
 
 var openAIInstance *openAIServiceClient

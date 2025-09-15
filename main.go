@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -8,8 +9,9 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/openai/openai-go/v2"
-	singletons "github.com/pavitra93/11-openai-chats/external/clients"
-	"github.com/pavitra93/11-openai-chats/internal/openaiapi"
+	mcp_client "github.com/pavitra93/11-openai-chats/external/clients/mcp"
+	openai_client "github.com/pavitra93/11-openai-chats/external/clients/openai"
+	send_receive "github.com/pavitra93/11-openai-chats/internal/send-receive"
 	"github.com/pavitra93/11-openai-chats/internal/service/chatbot"
 	"github.com/pavitra93/11-openai-chats/pkg/logger"
 )
@@ -35,10 +37,8 @@ func main() {
 	}
 
 	// Initialize OpenAI client & set Config
-	openAIServiceClient := singletons.GetOpenAIClientInstance(openapiKey)
-
-	// Initialize OpenAI Config
-	OpenaiCfg := &singletons.OpenAIConfig{
+	openAIServiceClient := openai_client.GetOpenAIClientInstance(openapiKey)
+	OpenaiCfg := &openai_client.OpenAIConfig{
 		OpenAPIClient: openAIServiceClient.OpenAIClient,
 		MaxTokens:     maxTokens,
 		Temperature:   temperature,
@@ -52,13 +52,19 @@ func main() {
 		HistorySize:  5,
 	}
 
-	// Initialize Sender Strategy as Stream or Once
-	SenderStrategy := openaiapi.NewSenderRecieverStrategy("stream", OpenaiCfg)
+	// Initialize MCP Clients & set Config
+	mcpManager := mcp_client.GetManager()
 
-	// Initialize Chatbot Service wi
-	//fmt.Println("========Chatbot with No Memory=========")
-	//NoMemoryChatbotService := &chatbot.NoMemoryChatbotService{SenderStrategy: SenderStrategy}
-	//NoMemoryChatbotService.RunNoMemoryChatbot()
+	// Register MCP Server for day to day common tools
+	MCPServerConfig := &mcp_client.MCPServerConfig{
+		Name:     os.Getenv("ACCUWEATHER_MCP_NAME"),
+		Endpoint: os.Getenv("ACCUWEATHER_MCP_SERVER_URL"),
+	}
+
+	mcpManager.RegisterServer(context.Background(), MCPServerConfig)
+
+	// Initialize Sender Strategy as Stream or Once
+	SenderStrategy := send_receive.NewSenderRecieverStrategy("once", OpenaiCfg, mcpManager)
 
 	fmt.Println("========Chatbot with Memory=========")
 	MemoryChatbotService := &chatbot.MemoryChatbotService{SenderStrategy: SenderStrategy}

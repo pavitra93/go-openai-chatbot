@@ -9,11 +9,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pavitra93/11-openai-chats/internal/strategy"
+	"github.com/pavitra93/11-openai-chats/internal/send-receive"
 )
 
 type NoMemoryChatbotService struct {
-	SenderStrategy strategy.SendAndRecieveOpenAIStrategy
+	SenderStrategy send_receive.SendAndRecieveOpenAIStrategy
 }
 
 func (n *NoMemoryChatbotService) RunNoMemoryChatbot() {

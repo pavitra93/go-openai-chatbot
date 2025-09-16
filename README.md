@@ -128,6 +128,28 @@ npx -y supergateway \
 go run main.go
 ```
 
+## ⚡ Concurrent Multi-Server Registration
+
+The `MCP Manager` can register multiple MCP servers concurrently with retries and track the registration order.
+
+Example in `main.go`:
+
+```go
+servers := []mcp_client.MCPServerConfig{
+    { Name: os.Getenv("ACCUWEATHER_MCP_NAME"), Endpoint: os.Getenv("ACCUWEATHER_MCP_SERVER_URL") },
+    { Name: os.Getenv("NOTION_MCP_NAME"),     Endpoint: os.Getenv("NOTION_MCP_SERVER_URL") },
+}
+ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+defer cancel()
+if err := mcpManager.RegisterServers(ctx, servers); err != nil {
+    slog.Error("failed to register some MCP servers", "error", err)
+}
+// Inspect registration stack (order)
+slog.Info("MCP servers registered", "order", mcpManager.ListServersInOrder())
+```
+
+Under the hood, `RegisterServers` uses `errgroup` for parallelism and a simple exponential backoff (3 attempts) per server. Successful registrations are kept even if others fail.
+
 ## 🎯 Usage
 
 Once the application starts, you'll see:
@@ -223,14 +245,6 @@ GOOS=windows GOARCH=amd64 go build -o chatbot.exe main.go
 go test ./...
 ```
 
-### Code Structure
-
-The application follows clean architecture principles:
-
-- **External Layer**: Handles external API clients (OpenAI, MCP)
-- **Internal Layer**: Contains business logic and services
-- **Package Layer**: Shared utilities and helpers
-
 ## 📊 Logging
 
 The application uses structured JSON logging:
@@ -251,23 +265,12 @@ Example log entry:
 
 ## 🔌 MCP Integration
 
-This chatbot integrates with the MCP (Model Context Protocol) ecosystem, supporting multiple servers simultaneously:
+This chatbot integrates with the MCP (Model Context Protocol) ecosystem, supporting multiple servers simultaneously.
 
 ### Currently Integrated Services
 
-#### Weather (AccuWeather)
-- **Hourly Forecast**: Get weather for the next 12 hours
-- **Daily Forecast**: Get weather for up to 15 days
-- **Location Support**: Any city or location worldwide
-- **Unit Support**: Metric (°C) and Imperial (°F) units
-- **Server**: [@timlukahorstmann/mcp-weather](https://github.com/TimLukaHorstmann/mcp-weather)
-
-#### Notion
-- **Page Management**: Create, read, update, and delete pages
-- **Database Operations**: Query and modify databases
-- **Content Creation**: Rich text and structured content
-- **Search**: Find pages and databases by content
-- **Server**: [@notionhq/notion-mcp-server](https://github.com/notionhq/notion-mcp-server)
+- Weather (AccuWeather) via `@timlukahorstmann/mcp-weather`
+- Notion via `@notionhq/notion-mcp-server`
 
 ### Architecture Benefits
 
@@ -321,74 +324,9 @@ Want to contribute a new MCP integration? Here's how:
 
 ## 🚨 Troubleshooting
 
-### Common Issues
-
-1. **MCP Server Connection Failed**
-   - Ensure the required MCP servers are running on their configured ports
-   - Check that API keys are set correctly for each service
-   - Verify the server URLs in environment variables
-   - Check server logs for authentication errors
-
-2. **OpenAI API Errors**
-   - Verify your OpenAI API key is valid and has sufficient credits
-   - Check the `MAX_TOKENS` setting isn't too high
-   - Ensure you have access to GPT-4 model
-
-3. **Environment Variables Not Loaded**
-   - Make sure `.env` file is in the project root
-   - Check variable names match exactly (case-sensitive)
-   - Restart the application after changing `.env`
-
-4. **Tool Schema Errors**
-   - The application automatically normalizes tool schemas
-   - Check logs for schema validation warnings
-   - Ensure MCP servers return valid JSON schemas
-
-5. **Log File Issues**
-   - Ensure the `logs/` directory is writable
-   - Check disk space availability
-   - Verify file permissions
-
-### Debug Mode
-
-Enable debug logging by modifying the logger configuration in `pkg/logger/setup-logger.go`:
-
-```go
-handler := slog.NewJSONHandler(file, &slog.HandlerOptions{
-    Level: slog.LevelDebug, // Change from Info to Debug
-})
-```
+- Ensure MCP servers are running on their configured ports and tokens are set
+- Check logs for detailed request/step traces and stack traces on panic
 
 ## 📝 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-### Development Guidelines
-
-1. Follow Go best practices and conventions
-2. Add appropriate tests for new features
-3. Update documentation for any API changes
-4. Ensure all environment variables are documented
-
-## 🔗 Related Projects
-
-- [MCP Weather Server](https://github.com/TimLukaHorstmann/mcp-weather) - Weather MCP server implementation
-- [OpenAI Go SDK](https://github.com/openai/openai-go) - Official OpenAI Go client
-- [Model Context Protocol](https://github.com/modelcontextprotocol) - MCP specification and tools
-
-## 📞 Support
-
-For issues and questions:
-
-1. Check the troubleshooting section above
-2. Review the logs in `logs/app.log`
-3. Open an issue on the GitHub repository
-4. Ensure all dependencies are up to date
-
----
-
-**Happy Chatting! 🤖✨**

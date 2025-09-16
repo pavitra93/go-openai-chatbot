@@ -4,7 +4,7 @@ A sophisticated Go-based chatbot application that integrates OpenAI's GPT-4 with
 
 ## 🌟 Features
 
-- **OpenAI GPT-4 Integration**: Powered by OpenAI's latest GPT-4 model for intelligent conversations
+- **OpenAI GPT-4 Integration**: Powered by OpenAI's GPT-4 model for intelligent conversations
 - **Memory-enabled Chat**: Maintains conversation history for context-aware responses
 - **Multi-MCP Integration**: Supports multiple MCP servers simultaneously for diverse functionality
 - **Weather Forecasting**: Real-time weather data via AccuWeather API through MCP weather server

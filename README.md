@@ -282,51 +282,25 @@ We're actively working on expanding the MCP ecosystem integration. Here's our ro
 
 ### 📅 Calendar & Scheduling
 - **Google Calendar**: Create, update, and manage calendar events
-- **Outlook Calendar**: Microsoft 365 calendar integration
-- **Meeting Scheduling**: Intelligent meeting coordination
-- **Time Zone Management**: Automatic time zone handling
 
 ### 📧 Communication
 - **Gmail**: Send, read, and manage emails
 - **Slack**: Send messages and manage channels
-- **Discord**: Bot integration for Discord servers
-- **Teams**: Microsoft Teams integration
 
 ### 📊 Productivity & Data
 - **Google Sheets**: Read and write spreadsheet data
-- **Airtable**: Database and project management
-- **Trello**: Project and task management
 - **Jira**: Issue tracking and project management
 
 ### 🛒 E-commerce & Services
-- **Stripe**: Payment processing and subscription management
-- **Shopify**: E-commerce store management
-- **AWS**: Cloud resource management
 - **GitHub**: Repository and issue management
-
-### 🎵 Media & Content
-- **Spotify**: Music playback and playlist management
-- **YouTube**: Video search and playlist creation
-- **Unsplash**: Image search and management
-- **Pexels**: Stock photo integration
-
-### 🏠 Smart Home & IoT
-- **Home Assistant**: Smart home device control
-- **Philips Hue**: Lighting control
-- **Nest**: Thermostat and security management
-- **Ring**: Doorbell and security integration
 
 ### 📈 Analytics & Monitoring
 - **Google Analytics**: Website traffic analysis
-- **Mixpanel**: User behavior tracking
 - **Datadog**: Infrastructure monitoring
 - **New Relic**: Application performance monitoring
 
 ### 🔐 Security & Authentication
 - **Auth0**: User authentication management
-- **Okta**: Identity and access management
-- **1Password**: Password management
-- **LastPass**: Secure password storage
 
 ### Contributing to Integrations
 

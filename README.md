@@ -1,17 +1,19 @@
-# OpenAI ChatBot with MCP Weather Integration
+# OpenAI ChatBot with Multi-MCP Integration
 
-A sophisticated Go-based chatbot application that integrates OpenAI's GPT-4 with Model Context Protocol (MCP) servers to provide intelligent conversations with weather forecasting capabilities using AccuWeather API.
+A sophisticated Go-based chatbot application that integrates OpenAI's GPT-4 with multiple Model Context Protocol (MCP) servers to provide intelligent conversations with access to various external services and APIs.
 
 ## 🌟 Features
 
 - **OpenAI GPT-4 Integration**: Powered by OpenAI's latest GPT-4 model for intelligent conversations
 - **Memory-enabled Chat**: Maintains conversation history for context-aware responses
-- **MCP Weather Server**: Integrates with [TimLukaHorstmann/mcp-weather](https://github.com/TimLukaHorstmann/mcp-weather) for real-time weather data
-- **AccuWeather API**: Provides accurate weather forecasts and current conditions
+- **Multi-MCP Integration**: Supports multiple MCP servers simultaneously for diverse functionality
+- **Weather Forecasting**: Real-time weather data via AccuWeather API through MCP weather server
+- **Notion Integration**: Create and manage Notion pages, databases, and content
 - **Structured Architecture**: Clean separation of concerns with modular design
 - **Concurrent Processing**: Uses goroutines and channels for efficient message handling
 - **Comprehensive Logging**: JSON-structured logging with file output
 - **Environment Configuration**: Flexible configuration through environment variables
+- **Transport Flexibility**: Supports both HTTP/SSE and stdio transport modes
 
 ## 🏗️ Architecture
 
@@ -36,11 +38,12 @@ A sophisticated Go-based chatbot application that integrates OpenAI's GPT-4 with
 
 ### Key Components
 
-1. **MCP Manager**: Manages connections to MCP servers and tool schemas
+1. **MCP Manager**: Manages connections to multiple MCP servers and tool schemas
 2. **OpenAI Client**: Singleton wrapper for OpenAI API interactions
 3. **Chatbot Service**: Handles conversation flow and user interactions
 4. **Send/Receive Strategies**: Implements different message handling patterns
-5. **Logger**: Structured JSON logging with file output
+5. **Transport Factory**: Supports multiple transport modes (HTTP/SSE, stdio)
+6. **Logger**: Structured JSON logging with file output
 
 ## 🚀 Quick Start
 
@@ -48,8 +51,10 @@ A sophisticated Go-based chatbot application that integrates OpenAI's GPT-4 with
 
 - Go 1.25.0 or later
 - OpenAI API key
-- AccuWeather API key (free tier available)
-- Node.js (for MCP weather server)
+- Node.js (for MCP servers)
+- API keys for desired integrations:
+  - AccuWeather API key (for weather)
+  - Notion API token (for Notion integration)
 
 ### 1. Clone the Repository
 
@@ -73,16 +78,25 @@ Create a `.env` file in the project root:
 OPENAI_API_KEY=your_openai_api_key_here
 MAX_TOKENS=1000
 TEMPERATURE=0.7
-SYSTEM_MESSAGE="You are a helpful AI assistant with access to weather information. You can provide weather forecasts and current conditions for any location."
+SYSTEM_MESSAGE="You are a helpful AI assistant with access to various tools and services. You can help with weather information, Notion pages, and more."
 
-# MCP Weather Server Configuration
+# MCP Server Configuration
+# Weather Server
 ACCUWEATHER_MCP_NAME=weather
-ACCUWEATHER_MCP_SERVER_URL=http://127.0.0.1:4004/messages
+ACCUWEATHER_MCP_SERVER_URL=http://127.0.0.1:4004/mcp
+ACCUWEATHER_API_KEY=your_accuweather_api_key
+
+# Notion Server
+NOTION_MCP_NAME=notion
+NOTION_MCP_SERVER_URL=http://127.0.0.1:4005/mcp
+NOTION_MCP_API_KEY=your_notion_api_token
 ```
 
-### 4.1. Start the MCP Weather Server
+### 4. Start MCP Servers
 
-Before running the chatbot, start the MCP weather server using the provided command:
+Before running the chatbot, start the required MCP servers:
+
+#### 4.1. Weather Server
 
 ```bash
 $env:ACCUWEATHER_API_KEY = "<ACCUWEATHER_API_KEY>"
@@ -91,20 +105,20 @@ npx -y supergateway \
   --stdio "npx -y @timlukahorstmann/mcp-weather" \
   --port 4004 \
   --baseUrl http://127.0.0.1 \
-  --outputTransport streamableHttp
-  --env ACCUWEATHER_API_KEY="$ACCUWEATHER_API_KEY"
+  --outputTransport streamableHttp \
+  --env ACCUWEATHER_API_KEY="$env:ACCUWEATHER_API_KEY"
 ```
 
-### 4.2. Start the Notion MCP Server 
+#### 4.2. Notion Server
 
 ```bash 
 npx -y supergateway \
-  --stdio  "npx -y @notionhq/notion-mcp-server" \
+  --stdio "npx -y @notionhq/notion-mcp-server" \
   --port 4005 \
   --baseUrl http://127.0.0.1 \
   --outputTransport streamableHttp \
-  --oauth2Bearer "<nt_****>"
- ```
+  --oauth2Bearer "<NOTION_API_TOKEN>"
+```
 
 ### 5. Run the Application
 
@@ -136,10 +150,22 @@ Hello with Memory Chatbot
 🤖 Chatbot: [Shows 5-day weather forecast for Tokyo]
 ```
 
+**Notion Integration:**
+```
+🧔🏻‍♂️ You: Create a new Notion page with my meeting notes
+🤖 Chatbot: [Creates a new Notion page with structured content]
+
+🧔🏻‍♂️ You: Search for pages about project planning
+🤖 Chatbot: [Searches and returns relevant Notion pages]
+
+🧔🏻‍♂️ You: Update my task database with new items
+🤖 Chatbot: [Adds new tasks to your Notion database]
+```
+
 **General Conversation:**
 ```
 🧔🏻‍♂️ You: Hello! How are you today?
-🤖 Chatbot: Hello! I'm doing well, thank you for asking! I'm here and ready to help you with any questions you might have, including weather information if you need it.
+🤖 Chatbot: Hello! I'm doing well, thank you for asking! I'm here and ready to help you with any questions you might have, including weather information, Notion pages, and more.
 
 🧔🏻‍♂️ You: exit
 🤖 Chatbot: Bye. Thanks for chatting with me.
@@ -161,7 +187,11 @@ Hello with Memory Chatbot
 | `TEMPERATURE` | OpenAI temperature setting (0-1) | Yes | - |
 | `SYSTEM_MESSAGE` | System prompt for the AI | Yes | - |
 | `ACCUWEATHER_MCP_NAME` | Name for the MCP weather server | Yes | - |
-| `ACCUWEATHER_MCP_SERVER_URL` | MCP server endpoint | Yes | - |
+| `ACCUWEATHER_MCP_SERVER_URL` | MCP weather server endpoint | Yes | - |
+| `ACCUWEATHER_API_KEY` | AccuWeather API key | Yes | - |
+| `NOTION_MCP_NAME` | Name for the MCP Notion server | Yes | - |
+| `NOTION_MCP_SERVER_URL` | MCP Notion server endpoint | Yes | - |
+| `NOTION_MCP_API_KEY` | Notion API token | Yes | - |
 
 ### OpenAI Configuration
 
@@ -219,32 +249,109 @@ Example log entry:
 
 ## 🔌 MCP Integration
 
-This chatbot integrates with the MCP (Model Context Protocol) ecosystem:
+This chatbot integrates with the MCP (Model Context Protocol) ecosystem, supporting multiple servers simultaneously:
 
-### Weather Tools Available
+### Currently Integrated Services
 
+#### Weather (AccuWeather)
 - **Hourly Forecast**: Get weather for the next 12 hours
 - **Daily Forecast**: Get weather for up to 15 days
 - **Location Support**: Any city or location worldwide
 - **Unit Support**: Metric (°C) and Imperial (°F) units
+- **Server**: [@timlukahorstmann/mcp-weather](https://github.com/TimLukaHorstmann/mcp-weather)
 
-### MCP Server Details
+#### Notion
+- **Page Management**: Create, read, update, and delete pages
+- **Database Operations**: Query and modify databases
+- **Content Creation**: Rich text and structured content
+- **Search**: Find pages and databases by content
+- **Server**: [@notionhq/notion-mcp-server](https://github.com/notionhq/notion-mcp-server)
 
-The weather functionality is provided by [@timlukahorstmann/mcp-weather](https://github.com/TimLukaHorstmann/mcp-weather), which:
+### Architecture Benefits
 
-- Uses AccuWeather API for accurate weather data
-- Provides both hourly and daily forecasts
-- Supports multiple locations and units
-- Runs as a separate MCP server process
+- **Modular Design**: Each MCP server runs independently
+- **Scalable**: Easy to add new integrations
+- **Transport Flexibility**: Supports HTTP/SSE and stdio transports
+- **Tool Schema Validation**: Automatic schema normalization for OpenAI compatibility
+
+## 🚀 Upcoming Integrations
+
+We're actively working on expanding the MCP ecosystem integration. Here's our roadmap:
+
+### 📅 Calendar & Scheduling
+- **Google Calendar**: Create, update, and manage calendar events
+- **Outlook Calendar**: Microsoft 365 calendar integration
+- **Meeting Scheduling**: Intelligent meeting coordination
+- **Time Zone Management**: Automatic time zone handling
+
+### 📧 Communication
+- **Gmail**: Send, read, and manage emails
+- **Slack**: Send messages and manage channels
+- **Discord**: Bot integration for Discord servers
+- **Teams**: Microsoft Teams integration
+
+### 📊 Productivity & Data
+- **Google Sheets**: Read and write spreadsheet data
+- **Airtable**: Database and project management
+- **Trello**: Project and task management
+- **Jira**: Issue tracking and project management
+
+### 🛒 E-commerce & Services
+- **Stripe**: Payment processing and subscription management
+- **Shopify**: E-commerce store management
+- **AWS**: Cloud resource management
+- **GitHub**: Repository and issue management
+
+### 🎵 Media & Content
+- **Spotify**: Music playback and playlist management
+- **YouTube**: Video search and playlist creation
+- **Unsplash**: Image search and management
+- **Pexels**: Stock photo integration
+
+### 🏠 Smart Home & IoT
+- **Home Assistant**: Smart home device control
+- **Philips Hue**: Lighting control
+- **Nest**: Thermostat and security management
+- **Ring**: Doorbell and security integration
+
+### 📈 Analytics & Monitoring
+- **Google Analytics**: Website traffic analysis
+- **Mixpanel**: User behavior tracking
+- **Datadog**: Infrastructure monitoring
+- **New Relic**: Application performance monitoring
+
+### 🔐 Security & Authentication
+- **Auth0**: User authentication management
+- **Okta**: Identity and access management
+- **1Password**: Password management
+- **LastPass**: Secure password storage
+
+### Contributing to Integrations
+
+Want to contribute a new MCP integration? Here's how:
+
+1. **Find or Create an MCP Server**: Look for existing MCP servers or create your own
+2. **Add Configuration**: Update environment variables and server configs
+3. **Test Integration**: Ensure proper schema validation and error handling
+4. **Update Documentation**: Add examples and usage instructions
+5. **Submit PR**: Follow our contribution guidelines
+
+**Priority Integrations** (Next 3 months):
+- Google Calendar
+- Gmail
+- Google Sheets
+- GitHub
+- Slack
 
 ## 🚨 Troubleshooting
 
 ### Common Issues
 
 1. **MCP Server Connection Failed**
-   - Ensure the MCP weather server is running on port 4004
-   - Check that `ACCUWEATHER_API_KEY` is set correctly
-   - Verify the server URL in environment variables
+   - Ensure the required MCP servers are running on their configured ports
+   - Check that API keys are set correctly for each service
+   - Verify the server URLs in environment variables
+   - Check server logs for authentication errors
 
 2. **OpenAI API Errors**
    - Verify your OpenAI API key is valid and has sufficient credits
@@ -256,7 +363,12 @@ The weather functionality is provided by [@timlukahorstmann/mcp-weather](https:/
    - Check variable names match exactly (case-sensitive)
    - Restart the application after changing `.env`
 
-4. **Log File Issues**
+4. **Tool Schema Errors**
+   - The application automatically normalizes tool schemas
+   - Check logs for schema validation warnings
+   - Ensure MCP servers return valid JSON schemas
+
+5. **Log File Issues**
    - Ensure the `logs/` directory is writable
    - Check disk space availability
    - Verify file permissions

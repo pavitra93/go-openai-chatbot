@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -100,20 +100,16 @@ func (m *Manager) RegisterServer(ctx context.Context, cfg *MCPServerConfig) erro
 	// Build transport. Adjust headers/opts depending on your SDK version.
 	transport := &mcp.StreamableClientTransport{
 		Endpoint: cfg.Endpoint,
-		// If your SDK supports headers, set them here. If not, remove.
-		// Some transports accept Headers map; if not available remove.
-		// Headers: map[string]string{"Authorization": "Bearer " + cfg.APIKey},
 	}
 
 	// Connect (use ctx from caller; it should include a timeout)
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
-		log.Printf("failed to connect to %s: %w", cfg.Name, err)
+		slog.Error("failed to connect", "server", cfg.Name, "error", err)
 	}
 
 	// List tools
 	toolsResult, err := session.ListTools(ctx, nil)
-	log.Printf("toolsResult: %+v", toolsResult)
 	if err != nil {
 		_ = session.Close()
 		return fmt.Errorf("failed to list tools on %s: %w", cfg.Name, err)
@@ -125,16 +121,15 @@ func (m *Manager) RegisterServer(ctx context.Context, cfg *MCPServerConfig) erro
 		// tool.InputSchema is (per your earlier usage) a *jsonschema.Schema-like type.
 		// We'll marshal it to JSON and unmarshal to map[string]any so it fits openai.FunctionParameters.
 		var params openai.FunctionParameters
-		log.Printf("tool.InputSchema: %+v", tool.InputSchema)
 		if tool.InputSchema != nil {
 			b, err := json.Marshal(tool.InputSchema)
 			if err != nil {
 				// if marshaling fails, fallback to small default schema
-				log.Printf("warning: failed to marshal schema for tool %s on %s: %v", tool.Name, cfg.Name, err)
+				slog.Warn("failed to marshal schema", "tool", tool.Name, "server", cfg.Name, "error", err)
 			} else {
 				var m map[string]any
 				if err := json.Unmarshal(b, &m); err != nil {
-					log.Printf("warning: failed to unmarshal schema for tool %s on %s: %v", tool.Name, cfg.Name, err)
+					slog.Warn("failed to unmarshal schema", "tool", tool.Name, "server", cfg.Name, "error", err)
 				} else {
 					normalized := ensureObjectSchema(m)
 					params = openai.FunctionParameters(normalized)
@@ -156,7 +151,6 @@ func (m *Manager) RegisterServer(ctx context.Context, cfg *MCPServerConfig) erro
 			Description: openai.String(tool.Description),
 			Parameters:  params,
 		}
-		log.Printf("tool: %+v", fd)
 		openAISchemas = append(openAISchemas, openai.ChatCompletionFunctionTool(fd))
 	}
 
@@ -170,7 +164,7 @@ func (m *Manager) RegisterServer(ctx context.Context, cfg *MCPServerConfig) erro
 	m.schemas[cfg.Name] = openAISchemas
 	m.mu.Unlock()
 
-	log.Printf("registered MCP server %s with %d tools", cfg.Name, len(openAISchemas))
+	slog.Info("registered MCP server", "server", cfg.Name, "tool_count", len(openAISchemas))
 	return nil
 }
 
@@ -185,7 +179,7 @@ func (m *Manager) UnregisterServer(name string) error {
 	}
 	delete(m.tools, name)
 	delete(m.schemas, name)
-	log.Printf("unregistered MCP server %s", name)
+	slog.Info("unregistered MCP server", "server", name)
 	return nil
 }
 
@@ -236,25 +230,36 @@ func (m *Manager) ListServers() []string {
 
 func (m *Manager) CallTool(ToolID string, ToolName string, args map[string]any) (string, error) {
 	split := strings.Split(ToolName, "__")
+	if len(split) != 2 {
+		return "", fmt.Errorf("invalid tool name format: %s", ToolName)
+	}
+
+	// Log the full arguments for debugging
+	argsBytes, _ := json.Marshal(args)
+	slog.Info("calling tool", "tool", ToolName, "args", string(argsBytes))
+
 	toolResp, err := m.GetSession(split[0]).CallTool(context.Background(), &mcp.CallToolParams{
 		Name:      split[1],
 		Arguments: args,
 	})
 
 	if err != nil {
+		slog.Error("tool call failed", "tool", ToolName, "error", err)
 		return err.Error(), err
 	}
 
-	//    We marshal the whole response to JSON so we preserve structured data.
+	// Marshal the whole response to JSON so we preserve structured data.
 	respBytes, err := json.Marshal(toolResp)
 	var respStr string
 	if err != nil {
+		slog.Error("failed to marshal tool response", "tool", ToolName, "error", err)
 		// fallback: use fmt.Sprintf
 		respStr = fmt.Sprintf("%+v", toolResp)
 	} else {
 		respStr = string(respBytes)
 	}
 
+	slog.Info("tool completed", "tool", ToolName)
 	return respStr, nil
 }
 

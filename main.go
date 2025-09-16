@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
 	"strconv"
@@ -55,7 +54,7 @@ func main() {
 
 	// Initialize MCP Clients & set Config
 	mcpManager := mcp_client.GetManager()
-	log.Printf("MCP Manager initialized")
+	slog.Info("MCP Manager initialized")
 
 	// Register MCP Server for day to day common tools
 	WeatherMCPServerConfig := &mcp_client.MCPServerConfig{
@@ -64,21 +63,19 @@ func main() {
 	}
 	err := mcpManager.RegisterServer(context.Background(), WeatherMCPServerConfig)
 	if err != nil {
-		log.Printf("MCP Manager failed to register server: %v", err)
+		slog.Info("MCP Manager failed to register server: %v", err)
 	}
 
 	// Register MCP Server for day to day common tools
-	//NotionMCPServerConfig := &mcp_client.MCPServerConfig{
-	//	Name:      "notion",
-	//	Transport: "stdio",
-	//	Command:   "notion-mcp-server",
-	//	Args:      []string{"--port", "0"},
-	//}
-	//err = mcpManager.RegisterServer(context.Background(), NotionMCPServerConfig)
-	//if err != nil {
-	//	log.Printf("MCP Manager failed to register server: %v", err)
-	//}
-	//log.Printf("MCP Manager registered servers: %v", mcpManager)
+	NotionMCPServerConfig := &mcp_client.MCPServerConfig{
+		Name:     os.Getenv("NOTION_MCP_NAME"),
+		Endpoint: os.Getenv("NOTION_MCP_SERVER_URL"),
+	}
+	err = mcpManager.RegisterServer(context.Background(), NotionMCPServerConfig)
+	if err != nil {
+		slog.Info("MCP Manager failed to register server: %v", err)
+	}
+	slog.Info("MCP Manager registered servers: %v", mcpManager)
 
 	// Initialize Sender Strategy as Stream or Once
 	SenderStrategy := send_receive.NewSenderRecieverStrategy("once", OpenaiCfg, mcpManager)

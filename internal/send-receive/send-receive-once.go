@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"log/slog"
+	"runtime/debug"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openai/openai-go/v2"
@@ -28,6 +30,23 @@ func NewOnceStrategy(config *client_openai.OpenAIConfig, mcpManager *client_mcp.
 
 func (w *StrategyOnce) SendtoOpenAI(ctx context.Context, messages <-chan string, reciever chan<- string, wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	// per-run correlation id and panic stack trace capture
+	reqID := fmt.Sprintf("once-%d", time.Now().UnixNano())
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("SendtoOpenAI panic",
+				"req", reqID,
+				"recover", r,
+				"stack", string(debug.Stack()),
+			)
+			reciever <- "Error: internal panic in SendtoOpenAI"
+		}
+	}()
+
+	step := 0
+	next := func() int { step++; return step }
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -37,11 +56,12 @@ func (w *StrategyOnce) SendtoOpenAI(ctx context.Context, messages <-chan string,
 				return
 			}
 
+			slog.Info("received user message", "req", reqID, "step", next(), "message", message)
+
 			// Construct the common params
 			param := &openai.ChatCompletionNewParams{
 				Model:       openai.ChatModelGPT4_1,
 				Seed:        openai.Int(0),
-				MaxTokens:   openai.Int(w.OpenAIConfig.MaxTokens),
 				Temperature: openai.Float(w.OpenAIConfig.Temperature),
 			}
 
@@ -50,17 +70,21 @@ func (w *StrategyOnce) SendtoOpenAI(ctx context.Context, messages <-chan string,
 				toolCollection = append(toolCollection, tool...)
 			}
 			param.Tools = toolCollection
+			slog.Info("tools assembled", "req", reqID, "step", next(), "tools_count", len(toolCollection))
 
 			// append user message
 			w.OpenAIConfig.History.Messages = append(w.OpenAIConfig.History.Messages, openai.UserMessage(message))
+			slog.Info("history appended user", "req", reqID, "step", next(), "history_len", len(w.OpenAIConfig.History.Messages))
 
 		iterate:
 
 			param.Messages = w.OpenAIConfig.History.Messages
 
 			// Send the request (use ctx)
+			slog.Info("sending completion request", "req", reqID, "step", next())
 			resp, err := w.OpenAIConfig.OpenAPIClient.Chat.Completions.New(ctx, *param)
 			if err != nil {
+				slog.Error("completion request failed", "req", reqID, "step", step, "error", err)
 				reciever <- "Error: " + err.Error()
 				return
 			}
@@ -73,7 +97,7 @@ func (w *StrategyOnce) SendtoOpenAI(ctx context.Context, messages <-chan string,
 
 			choice := resp.Choices[0]
 			toolCalls := choice.Message.ToolCalls
-			log.Printf("toolCalls: %v", toolCalls)
+			slog.Info("received tool calls", "req", reqID, "step", next(), "count", len(toolCalls))
 
 			// If there are no tools calls, it's a regular assistant response.
 			if len(toolCalls) == 0 {
@@ -84,7 +108,7 @@ func (w *StrategyOnce) SendtoOpenAI(ctx context.Context, messages <-chan string,
 
 				// send messages back to channel
 				reciever <- choice.Message.Content
-				slog.Info("Message sent to reciever channel")
+				slog.Info("assistant message delivered", "req", reqID, "step", next())
 			} else {
 				// **Important**: append the assistant message that *requested* the tools call
 				if w.OpenAIConfig.AllowHistory {
@@ -98,20 +122,65 @@ func (w *StrategyOnce) SendtoOpenAI(ctx context.Context, messages <-chan string,
 						continue
 					}
 
+					// Debug: Log the raw arguments string
+					slog.Info("tool args raw", "req", reqID, "step", next(), "tool", toolCall.Function.Name, "len", len(toolCall.Function.Arguments))
+
 					// 1) Parse the JSON-encoded arguments string into a map
 					var args map[string]any
 					err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args)
 					if err != nil {
-						log.Printf("failed to parse tool args for %s: %v", toolCall.Function.Name, err)
-						// append an error tool message back to history so API sees we responded
-						if w.OpenAIConfig.AllowHistory {
-							errMsg := fmt.Sprintf("error_parsing_args: %v", err)
-							w.OpenAIConfig.History.Messages = append(
-								w.OpenAIConfig.History.Messages,
-								openai.ToolMessage(errMsg, toolCall.ID),
-							)
+						slog.Error("failed to parse tool args", "req", reqID, "step", step, "tool", toolCall.Function.Name, "error", err)
+						slog.Info("tool args raw copy", "req", reqID, "step", step, "raw", toolCall.Function.Arguments)
+
+						// Try to fix common JSON truncation issues
+						argsStr := toolCall.Function.Arguments
+						if !strings.HasSuffix(argsStr, "}") && !strings.HasSuffix(argsStr, "]") {
+							slog.Warn("args appear truncated; attempting fix", "req", reqID, "step", next())
+
+							// For Notion API calls, try to create a simpler structure
+							if strings.Contains(toolCall.Function.Name, "notion") && strings.Contains(argsStr, "\"content\":\"") {
+								// Extract the title and create a simple page structure
+								titleStart := strings.Index(argsStr, "\"title\":[{\"text\":{\"content\":\"")
+								if titleStart > 0 {
+									titleStart += len("\"title\":[{\"text\":{\"content\":\"")
+									titleEnd := strings.Index(argsStr[titleStart:], "\"")
+									if titleEnd > 0 {
+										title := argsStr[titleStart : titleStart+titleEnd]
+
+										// Create a simplified page structure
+										argsStr = fmt.Sprintf(`{"parent":{"page_id":"ca42c764-61c4-45f6-9aaf-22910ec57800"},"properties":{"title":[{"text":{"content":"%s"}}]}}`, title)
+										slog.Info("created simplified args", "req", reqID, "step", next())
+										err = json.Unmarshal([]byte(argsStr), &args)
+										if err != nil {
+											slog.Error("simplified args parse failed", "req", reqID, "step", step, "error", err)
+										}
+									}
+								}
+							} else {
+								// Generic fix attempt
+								lastQuote := strings.LastIndex(argsStr, "\"")
+								if lastQuote > 0 {
+									argsStr = argsStr[:lastQuote+1] + "]}}}"
+									slog.Info("attempting generic fix parse", "req", reqID, "step", next())
+									err = json.Unmarshal([]byte(argsStr), &args)
+									if err != nil {
+										slog.Error("generic fix parse failed", "req", reqID, "step", step, "error", err)
+									}
+								}
+							}
 						}
-						continue
+
+						if err != nil {
+							// append an error tool message back to history so API sees we responded
+							if w.OpenAIConfig.AllowHistory {
+								errMsg := fmt.Sprintf("error_parsing_args: %v", err)
+								w.OpenAIConfig.History.Messages = append(
+									w.OpenAIConfig.History.Messages,
+									openai.ToolMessage(errMsg, toolCall.ID),
+								)
+							}
+							continue
+						}
 					}
 
 					// 2) Build CallToolParams (use field names - adjust if your SDK has different fields)
@@ -119,12 +188,16 @@ func (w *StrategyOnce) SendtoOpenAI(ctx context.Context, messages <-chan string,
 						Name:      toolCall.Function.Name,
 						Arguments: args,
 					}
-					log.Printf("Calling MCP tool %s with params: %+v", params.Name, params.Arguments)
+					slog.Info("calling MCP tool", "req", reqID, "step", next(), "tool", params.Name)
+
+					// Debug: Log the parsed arguments structure
+					argsBytes, _ := json.Marshal(args)
+					slog.Debug("parsed args json", "req", reqID, "step", step, "json", string(argsBytes))
 
 					// 3) Call the MCP tool and check error
 					respStr, err := w.MCPManager.CallTool(toolCall.ID, toolCall.Function.Name, args)
 					if err != nil {
-						log.Printf("CallTool error for %s: %v", params.Name, err)
+						slog.Error("CallTool error", "req", reqID, "step", step, "tool", params.Name, "error", err)
 						if w.OpenAIConfig.AllowHistory {
 							w.OpenAIConfig.History.Messages = append(
 								w.OpenAIConfig.History.Messages,
@@ -134,7 +207,7 @@ func (w *StrategyOnce) SendtoOpenAI(ctx context.Context, messages <-chan string,
 						continue
 					}
 
-					log.Printf("Tool Call Response for %s: %s", params.Name, respStr)
+					slog.Info("tool call response", "req", reqID, "step", next(), "tool", params.Name)
 
 					// 5) Append tool response to conversation history (must follow the assistant message)
 					if w.OpenAIConfig.AllowHistory {

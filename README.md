@@ -9,6 +9,7 @@ A sophisticated Go-based chatbot application that integrates OpenAI's GPT-4 with
 - **Multi-MCP Integration**: Supports multiple MCP servers simultaneously for diverse functionality
 - **Weather Forecasting**: Real-time weather data via AccuWeather API through MCP weather server
 - **Notion Integration**: Create and manage Notion pages, databases, and content
+- **Redis Integration**: Use Redis MCP for key/value storage (session, user state, chat index)
 - **Structured Architecture**: Clean separation of concerns with modular design
 - **Concurrent Processing**: Uses goroutines and channels for efficient message handling
 - **Comprehensive Logging**: JSON-structured logging with file output
@@ -55,6 +56,7 @@ A sophisticated Go-based chatbot application that integrates OpenAI's GPT-4 with
 - API keys for desired integrations:
   - AccuWeather API key (for weather)
   - Notion API token (for Notion integration)
+  - Redis URL (for Redis MCP, optional)
 
 ### 1. Clone the Repository
 
@@ -78,7 +80,11 @@ Create a `.env` file in the project root:
 OPENAI_API_KEY=your_openai_api_key_here
 MAX_TOKENS=1000
 TEMPERATURE=0.7
-SYSTEM_MESSAGE="You are a helpful AI assistant with access to various tools and services. You can help with weather information, Notion pages, and more."
+
+# System prompt (use file for sensitive/long prompts)
+# If SYSTEM_MESSAGE_FILE is set, it takes precedence over SYSTEM_MESSAGE
+SYSTEM_MESSAGE_FILE=prompts/system_message.txt
+# SYSTEM_MESSAGE="You are a helpful AI assistant..."
 
 # MCP Server Configuration
 # Weather Server
@@ -90,7 +96,19 @@ ACCUWEATHER_API_KEY=your_accuweather_api_key
 NOTION_MCP_NAME=notion
 NOTION_MCP_SERVER_URL=http://127.0.0.1:4005/mcp
 NOTION_MCP_API_KEY=your_notion_api_token
+
+# Redis Server (optional)
+# Option A: Hosted Smithery endpoint (requires a publicly reachable Redis)
+REDIS_MCP_NAME=redis
+REDIS_MCP_SERVER_URL=https://server.smithery.ai/@redis/mcp-redis/mcp
+# Provide your cloud Redis connection string to the hosted server (cannot reach local 127.0.0.1)
+# Example cloud URL: redis://:password@host:port/0
+# Option B: Local supergateway (see below) -> set REDIS_MCP_SERVER_URL=http://127.0.0.1:4010/mcp
 ```
+
+Notes:
+- Place your system prompt in `prompts/system_message.txt` (gitignored) and point `SYSTEM_MESSAGE_FILE` to it. The app will load and trim the file contents at startup.
+- If `SYSTEM_MESSAGE_FILE` is not set, the app will use `SYSTEM_MESSAGE`.
 
 ### 4. Start MCP Servers
 
@@ -122,6 +140,33 @@ npx -y supergateway \
   --env NOTION_TOKEN="$env:NOTION_TOKEN"
 ```
 
+#### 4.3. Redis Server (choose one)
+
+- Hosted (Smithery endpoint): set `REDIS_MCP_SERVER_URL=https://server.smithery.ai/@redis/mcp-redis/mcp` and configure your cloud Redis URL for that hosted instance per provider docs.
+- Local (with your local Redis):
+
+```powershell
+# Start Redis locally (Docker example)
+docker run -d --name redis -p 6379:6379 redis:7
+
+# Point MCP Redis server to local Redis
+$env:REDIS_URL = "redis://127.0.0.1:6379/0"
+
+# Expose Redis MCP over HTTP via supergateway
+npx -y supergateway \
+  --stdio "npx -y @redis/mcp-redis" \
+  --port 4010 \
+  --baseUrl http://127.0.0.1 \
+  --outputTransport streamableHttp \
+  --env REDIS_URL="$env:REDIS_URL"
+```
+
+Then set:
+```bash
+REDIS_MCP_NAME=redis
+REDIS_MCP_SERVER_URL=https://server.smithery.ai/@redis/mcp-redis/mcp
+```
+
 ### 5. Run the Application
 
 ```bash
@@ -138,67 +183,21 @@ Example in `main.go`:
 servers := []mcp_client.MCPServerConfig{
     { Name: os.Getenv("ACCUWEATHER_MCP_NAME"), Endpoint: os.Getenv("ACCUWEATHER_MCP_SERVER_URL") },
     { Name: os.Getenv("NOTION_MCP_NAME"),     Endpoint: os.Getenv("NOTION_MCP_SERVER_URL") },
+    { Name: os.Getenv("REDIS_MCP_NAME"),      Endpoint: os.Getenv("REDIS_MCP_SERVER_URL") },
 }
 ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 defer cancel()
 if err := mcpManager.RegisterServers(ctx, servers); err != nil {
     slog.Error("failed to register some MCP servers", "error", err)
 }
-// Inspect registration stack (order)
 slog.Info("MCP servers registered", "order", mcpManager.ListServersInOrder())
 ```
 
-Under the hood, `RegisterServers` uses `errgroup` for parallelism and a simple exponential backoff (3 attempts) per server. Successful registrations are kept even if others fail.
+## 🎯 Usage Notes for Redis MCP
 
-## 🎯 Usage
-
-Once the application starts, you'll see:
-
-```
-========Chatbot with Memory=========
-Hello with Memory Chatbot
-🧔🏻‍♂️ You: 
-```
-
-### Example Interactions
-
-**Weather Queries:**
-```
-🧔🏻‍♂️ You: What's the weather like in New York today?
-🤖 Chatbot: [Provides detailed weather information using AccuWeather API]
-
-🧔🏻‍♂️ You: Will it rain in London tomorrow?
-🤖 Chatbot: [Gives precipitation forecast for London]
-
-🧔🏻‍♂️ You: Give me the 5-day forecast for Tokyo
-🤖 Chatbot: [Shows 5-day weather forecast for Tokyo]
-```
-
-**Notion Integration:**
-```
-🧔🏻‍♂️ You: Create a new Notion page with my meeting notes
-🤖 Chatbot: [Creates a new Notion page with structured content]
-
-🧔🏻‍♂️ You: Search for pages about project planning
-🤖 Chatbot: [Searches and returns relevant Notion pages]
-
-🧔🏻‍♂️ You: Update my task database with new items
-🤖 Chatbot: [Adds new tasks to your Notion database]
-```
-
-**General Conversation:**
-```
-🧔🏻‍♂️ You: Hello! How are you today?
-🤖 Chatbot: Hello! I'm doing well, thank you for asking! I'm here and ready to help you with any questions you might have, including weather information, Notion pages, and more.
-
-🧔🏻‍♂️ You: exit
-🤖 Chatbot: Bye. Thanks for chatting with me.
-```
-
-### Available Commands
-
-- `exit`, `quit`, or `bye`: Gracefully exit the application
-- Any other text: Send as a message to the chatbot
+- Tool names will be prefixed by the server name, e.g., `redis__get`, `redis__set`.
+- Hosted Smithery servers cannot access your local 127.0.0.1; provide a publicly reachable Redis URL.
+- For local development, prefer the local supergateway setup shown above.
 
 ## 🔧 Configuration
 
@@ -209,123 +208,37 @@ Hello with Memory Chatbot
 | `OPENAI_API_KEY` | Your OpenAI API key | Yes | - |
 | `MAX_TOKENS` | Maximum tokens per response | Yes | - |
 | `TEMPERATURE` | OpenAI temperature setting (0-1) | Yes | - |
-| `SYSTEM_MESSAGE` | System prompt for the AI | Yes | - |
+| `SYSTEM_MESSAGE_FILE` | Path to file containing system prompt | Recommended | - |
+| `SYSTEM_MESSAGE` | System prompt string (fallback) | Optional | - |
 | `ACCUWEATHER_MCP_NAME` | Name for the MCP weather server | Yes | - |
 | `ACCUWEATHER_MCP_SERVER_URL` | MCP weather server endpoint | Yes | - |
 | `ACCUWEATHER_API_KEY` | AccuWeather API key | Yes | - |
 | `NOTION_MCP_NAME` | Name for the MCP Notion server | Yes | - |
 | `NOTION_MCP_SERVER_URL` | MCP Notion server endpoint | Yes | - |
 | `NOTION_MCP_API_KEY` | Notion API token | Yes | - |
-
-### OpenAI Configuration
-
-The application supports various OpenAI settings:
-
-- **Model**: Uses GPT-4 by default
-- **Temperature**: Configurable for response creativity
-- **Max Tokens**: Controls response length
-- **History**: Maintains conversation context (configurable size)
-
-## 🛠️ Development
-
-### Building the Application
-
-```bash
-# Build for current platform
-go build -o chatbot main.go
-
-# Build for specific platforms
-GOOS=linux GOARCH=amd64 go build -o chatbot-linux main.go
-GOOS=windows GOARCH=amd64 go build -o chatbot.exe main.go
-```
-
-### Running Tests
-
-```bash
-go test ./...
-```
+| `REDIS_MCP_NAME` | Name for the Redis MCP server | Optional | - |
+| `REDIS_MCP_SERVER_URL` | Redis MCP server endpoint | Optional | - |
+| `REDIS_URL` | Redis connection string for the Redis MCP server | Optional | - |
 
 ## 📊 Logging
 
-The application uses structured JSON logging:
+The application uses structured JSON logging (see `pkg/logger`). Stack traces are captured for panics, and step-by-step request tracing is included in once-mode.
 
 - **Location**: `logs/app.log`
 - **Format**: JSON with timestamp, level, and message
 - **Level**: Info and above
-- **Rotation**: Manual (logs append to existing file)
-
-Example log entry:
-```json
-{
-  "time": "2024-01-15T10:30:45Z",
-  "level": "INFO",
-  "msg": "Message sent to reciever channel"
-}
-```
 
 ## 🔌 MCP Integration
 
-This chatbot integrates with the MCP (Model Context Protocol) ecosystem, supporting multiple servers simultaneously.
-
-### Currently Integrated Services
-
 - Weather (AccuWeather) via `@timlukahorstmann/mcp-weather`
 - Notion via `@notionhq/notion-mcp-server`
-
-### Architecture Benefits
-
-- **Modular Design**: Each MCP server runs independently
-- **Scalable**: Easy to add new integrations
-- **Transport Flexibility**: Supports HTTP/SSE and stdio transports
-- **Tool Schema Validation**: Automatic schema normalization for OpenAI compatibility
-
-## 🚀 Upcoming Integrations
-
-We're actively working on expanding the MCP ecosystem integration. Here's our roadmap:
-
-### 📅 Calendar & Scheduling
-- **Google Calendar**: Create, update, and manage calendar events
-
-### 📧 Communication
-- **Gmail**: Send, read, and manage emails
-- **Slack**: Send messages and manage channels
-
-### 📊 Productivity & Data
-- **Google Sheets**: Read and write spreadsheet data
-- **Jira**: Issue tracking and project management
-
-### 🛒 E-commerce & Services
-- **GitHub**: Repository and issue management
-
-### 📈 Analytics & Monitoring
-- **Google Analytics**: Website traffic analysis
-- **Datadog**: Infrastructure monitoring
-- **New Relic**: Application performance monitoring
-
-### 🔐 Security & Authentication
-- **Auth0**: User authentication management
-
-### Contributing to Integrations
-
-Want to contribute a new MCP integration? Here's how:
-
-1. **Find or Create an MCP Server**: Look for existing MCP servers or create your own
-2. **Add Configuration**: Update environment variables and server configs
-3. **Test Integration**: Ensure proper schema validation and error handling
-4. **Update Documentation**: Add examples and usage instructions
-5. **Submit PR**: Follow our contribution guidelines
-
-**Priority Integrations** (Next 3 months):
-- Google Calendar
-- Gmail
-- Google Sheets
-- GitHub
-- Slack
+- Redis via `@redis/mcp-redis` (local) or hosted Smithery endpoint
 
 ## 🚨 Troubleshooting
 
-- Ensure MCP servers are running on their configured ports and tokens are set
-- Check logs for detailed request/step traces and stack traces on panic
+- Ensure MCP servers are running and accessible at configured endpoints
+- Hosted MCPs cannot reach your local services; provide public URLs for dependencies (e.g., Redis)
+- For prompt secrecy, prefer `SYSTEM_MESSAGE_FILE` over inlining strings
 
 ## 📝 License
 

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -28,7 +29,20 @@ func main() {
 	openapiKey := os.Getenv("OPENAI_API_KEY")
 	maxTokens, _ := strconv.ParseInt(os.Getenv("MAX_TOKENS"), 10, 64)
 	temperature, _ := strconv.ParseFloat(os.Getenv("TEMPERATURE"), 64)
-	systemMessage := os.Getenv("SYSTEM_MESSAGE")
+
+	// Load system message from file if provided, else from env
+	systemMessage := ""
+	if path := os.Getenv("SYSTEM_MESSAGE_FILE"); path != "" {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			slog.Error("Failed to read system message file", "path", path, "error", err)
+			os.Exit(1)
+		}
+		systemMessage = strings.TrimSpace(string(b))
+	} else {
+		systemMessage = os.Getenv("SYSTEM_MESSAGE")
+	}
+
 	if openapiKey == "" || maxTokens == 0 || temperature == 0 || systemMessage == "" {
 		slog.Error("Error loading one of environment variables.",
 			slog.Group("error",
@@ -66,6 +80,10 @@ func main() {
 		{
 			Name:     os.Getenv("NOTION_MCP_NAME"),
 			Endpoint: os.Getenv("NOTION_MCP_SERVER_URL"),
+		},
+		{
+			Name:     os.Getenv("REDIS_MCP_NAME"),
+			Endpoint: os.Getenv("REDIS_MCP_SERVER_URL"),
 		},
 	}
 

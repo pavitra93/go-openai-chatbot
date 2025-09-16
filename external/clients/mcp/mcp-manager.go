@@ -57,6 +57,66 @@ func GetManager() *Manager {
 	return managerInstance
 }
 
+// normalizeJSONSchema traverses and fixes common incompatibilities for OpenAI tool parameter schemas.
+// - Ensures array "items" is an object schema; if provided as string or empty, default to {"type":"string"}
+// - Recursively normalizes nested properties and items
+func normalizeJSONSchema(node any) any {
+	switch v := node.(type) {
+	case map[string]any:
+		// Recurse properties
+		if propsRaw, ok := v["properties"].(map[string]any); ok {
+			for k, pv := range propsRaw {
+				propsRaw[k] = normalizeJSONSchema(pv)
+			}
+		}
+		// Handle array items shape
+		if t, ok := v["type"].(string); ok && t == "array" {
+			items, exists := v["items"]
+			if !exists || items == nil {
+				v["items"] = map[string]any{"type": "string"}
+			} else {
+				switch it := items.(type) {
+				case map[string]any:
+					v["items"] = normalizeJSONSchema(it)
+				case []any:
+					// If items provided as array, pick first and coerce
+					if len(it) > 0 {
+						first := normalizeJSONSchema(it[0])
+						if m, ok := first.(map[string]any); ok {
+							v["items"] = m
+						} else if s, ok := first.(string); ok {
+							v["items"] = map[string]any{"type": s}
+						} else {
+							v["items"] = map[string]any{"type": "string"}
+						}
+					} else {
+						v["items"] = map[string]any{"type": "string"}
+					}
+				case string:
+					v["items"] = map[string]any{"type": it}
+				default:
+					v["items"] = map[string]any{"type": "string"}
+				}
+			}
+		}
+		// Recurse nested object schemas
+		for k, val := range v {
+			if k == "properties" || k == "items" {
+				continue
+			}
+			v[k] = normalizeJSONSchema(val)
+		}
+		return v
+	case []any:
+		for i := range v {
+			v[i] = normalizeJSONSchema(v[i])
+		}
+		return v
+	default:
+		return node
+	}
+}
+
 // ensureObjectSchema normalizes an arbitrary map into a valid JSON Schema object
 // suitable for OpenAI tool function parameters. It guarantees the presence of
 // "type":"object" and at least an empty "properties" map. It also strips
@@ -74,6 +134,9 @@ func ensureObjectSchema(schema map[string]any) map[string]any {
 	delete(schema, "$schema")
 	delete(schema, "$id")
 
+	// Deep normalization (arrays, nested properties)
+	schema = normalizeJSONSchema(schema).(map[string]any)
+
 	// Enforce object type schema expected by OpenAI for tool parameters
 	if t, ok := schema["type"].(string); !ok || t == "" {
 		schema["type"] = "object"
@@ -83,9 +146,6 @@ func ensureObjectSchema(schema map[string]any) map[string]any {
 	if _, ok := schema["properties"]; !ok {
 		schema["properties"] = map[string]any{}
 	}
-
-	// If someone provided an array/object of required fields, keep as-is;
-	// otherwise do not add a "required" key to avoid invalid references.
 
 	return schema
 }
@@ -124,13 +184,10 @@ func (m *Manager) RegisterServer(ctx context.Context, cfg *MCPServerConfig) erro
 	// Build OpenAI schemas for this server
 	openAISchemas := make([]openai.ChatCompletionToolUnionParam, 0, len(toolsResult.Tools))
 	for _, tool := range toolsResult.Tools {
-		// tool.InputSchema is (per your earlier usage) a *jsonschema.Schema-like type.
-		// We'll marshal it to JSON and unmarshal to map[string]any so it fits openai.FunctionParameters.
 		var params openai.FunctionParameters
 		if tool.InputSchema != nil {
 			b, err := json.Marshal(tool.InputSchema)
 			if err != nil {
-				// if marshaling fails, fallback to small default schema
 				slog.Warn("failed to marshal schema", "tool", tool.Name, "server", cfg.Name, "error", err)
 			} else {
 				var m map[string]any
@@ -143,8 +200,6 @@ func (m *Manager) RegisterServer(ctx context.Context, cfg *MCPServerConfig) erro
 			}
 		}
 
-		// If there was no schema provided or normalization led to empty params,
-		// enforce a minimal valid object schema to satisfy OpenAI validation.
 		if params == nil {
 			params = openai.FunctionParameters(map[string]any{
 				"type":       "object",
@@ -249,7 +304,6 @@ func (m *Manager) GetSchemas(name string) []openai.ChatCompletionToolUnionParam 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if s, ok := m.schemas[name]; ok {
-		// return a copy to avoid caller mutating internal slice
 		cpy := make([]openai.ChatCompletionToolUnionParam, len(s))
 		copy(cpy, s)
 		return cpy
@@ -290,7 +344,6 @@ func (m *Manager) CallTool(ToolID string, ToolName string, args map[string]any) 
 		return "", fmt.Errorf("invalid tool name format: %s", ToolName)
 	}
 
-	// Log the full arguments for debugging
 	argsBytes, _ := json.Marshal(args)
 	slog.Info("calling tool", "tool", ToolName, "args", string(argsBytes))
 
@@ -304,18 +357,16 @@ func (m *Manager) CallTool(ToolID string, ToolName string, args map[string]any) 
 		return err.Error(), err
 	}
 
-	// Marshal the whole response to JSON so we preserve structured data.
 	respBytes, err := json.Marshal(toolResp)
 	var respStr string
 	if err != nil {
 		slog.Error("failed to marshal tool response", "tool", ToolName, "error", err)
-		// fallback: use fmt.Sprintf
 		respStr = fmt.Sprintf("%+v", toolResp)
 	} else {
 		respStr = string(respBytes)
 	}
 
-	slog.Info("tool completed", "tool", ToolName)
+	slog.Info("tool completed", "tool", ToolName, "respStr", respStr)
 	return respStr, nil
 }
 

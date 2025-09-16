@@ -112,12 +112,14 @@ npx -y supergateway \
 #### 4.2. Notion Server
 
 ```bash 
+$env:NOTION_TOKEN = "<NOTION_TOKEN>"
+
 npx -y supergateway \
   --stdio "npx -y @notionhq/notion-mcp-server" \
   --port 4005 \
   --baseUrl http://127.0.0.1 \
   --outputTransport streamableHttp \
-  --oauth2Bearer "<NOTION_API_TOKEN>"
+  --env NOTION_TOKEN="$env:NOTION_TOKEN"
 ```
 
 ### 5. Run the Application

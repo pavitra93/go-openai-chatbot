@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openai/openai-go/v2"
+	"golang.org/x/sync/errgroup"
 )
 
 // ServerConfig describes an MCP server to register
@@ -32,6 +34,9 @@ type Manager struct {
 
 	// schemas map: serverName -> []openai.ChatCompletionToolUnionParam (OpenAI tool schemas)
 	schemas map[string][]openai.ChatCompletionToolUnionParam
+
+	// order keeps server names in registration order
+	order []string
 }
 
 var (
@@ -46,6 +51,7 @@ func GetManager() *Manager {
 			sessions: make(map[string]*mcp.ClientSession),
 			tools:    make(map[string][]*mcp.Tool),
 			schemas:  make(map[string][]openai.ChatCompletionToolUnionParam),
+			order:    make([]string, 0),
 		}
 	})
 	return managerInstance
@@ -162,10 +168,51 @@ func (m *Manager) RegisterServer(ctx context.Context, cfg *MCPServerConfig) erro
 	m.sessions[cfg.Name] = session
 	m.tools[cfg.Name] = toolsResult.Tools
 	m.schemas[cfg.Name] = openAISchemas
+	// append to order if not already there
+	found := false
+	for _, n := range m.order {
+		if n == cfg.Name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		m.order = append(m.order, cfg.Name)
+	}
 	m.mu.Unlock()
 
 	slog.Info("registered MCP server", "server", cfg.Name, "tool_count", len(openAISchemas))
 	return nil
+}
+
+// RegisterServers registers multiple servers concurrently with retry/backoff.
+// Returns first error encountered, if any. Successful registrations remain.
+func (m *Manager) RegisterServers(ctx context.Context, cfgs []MCPServerConfig) error {
+	g, ctx := errgroup.WithContext(ctx)
+	for i := range cfgs {
+		cfg := cfgs[i]
+		g.Go(func() error {
+			var lastErr error
+			backoff := 300 * time.Millisecond
+			for attempt := 1; attempt <= 3; attempt++ {
+				if err := m.RegisterServer(ctx, &cfg); err != nil {
+					lastErr = err
+					slog.Warn("register server failed; retrying", "server", cfg.Name, "attempt", attempt, "error", err)
+					select {
+					case <-time.After(backoff):
+						backoff *= 2
+						continue
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				slog.Info("server registered", "server", cfg.Name)
+				return nil
+			}
+			return lastErr
+		})
+	}
+	return g.Wait()
 }
 
 // UnregisterServer closes and removes the session and schema for the given server name.
@@ -225,6 +272,15 @@ func (m *Manager) ListServers() []string {
 	for k := range m.sessions {
 		out = append(out, k)
 	}
+	return out
+}
+
+// ListServersInOrder returns the registration order list.
+func (m *Manager) ListServersInOrder() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]string, len(m.order))
+	copy(out, m.order)
 	return out
 }
 
